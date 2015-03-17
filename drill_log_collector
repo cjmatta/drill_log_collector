@@ -12,11 +12,12 @@ set -o errexit
 sOutputDir=$(pwd)
 
 function show_help {
-    echo "$0 [ -s | -e ] [ -d save_location ]"
+    echo "$0 [ -s | -e [-x]] [ -d save_location ]"
     echo ""
     echo " If a save locaiton isn't specified, will save in the current directory."
     echo " Use -s to checkpoint the logs before running the query"
     echo " Use -e to end the queries and collect the logs"
+    echo " If -x is specified with -e, don't clean up the diff logs, just collect (useful to look at logs whle a query is still running)."
     echo ""
 }
 
@@ -27,8 +28,8 @@ then
 fi
 
 sMode=""
-
-while getopts "hsed:" opt
+sClean=true
+while getopts "hsexd:" opt
 do
     case "$opt" in
         h)
@@ -38,6 +39,8 @@ do
         s)  sMode="start"
             ;;
         e)  sMode="end"
+            ;;
+        x)  sClean=false
             ;;
         d)  sOutputDir=$OPTARG
             ;;
@@ -140,6 +143,9 @@ then
     fi
     sLogFile=$(cat /tmp/$0_logfilename)
     get_drillbit_logs $sLogFile
-    delete_temp_file $sLogFile
-    rm /tmp/$0_logfilename
+    if [[ $sClean = true ]]
+    then
+        delete_temp_file $sLogFile
+        rm /tmp/$0_logfilename
+    fi
 fi
