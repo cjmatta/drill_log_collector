@@ -8,11 +8,12 @@
 set -o nounset
 set -o errexit
 
+sFileName=$(basename $0)
+
 # Get options
 sOutputDir=$(pwd)
-
 function show_help {
-    echo "$0 [ -s | -e ] [ -d save_location ]"
+    echo "${sFileName} [ -s | -e ] [ -d save_location ]"
     echo ""
     echo " If a save locaiton isn't specified, will save in the current directory."
     echo " Use -s to checkpoint the logs before running the query"
@@ -128,18 +129,18 @@ if [[ "$sMode" == "start" ]]
 then
     echo "setting checkpoints"
     sLogFile=$(set_current_drillbit_logs)
-    echo $sLogFile > /tmp/$0_logfilename
+    echo $sLogFile > /tmp/${sFileName}_logfilename
 fi
 
 if [[ "$sMode" == "end" ]]
 then
-    if [[ ! -f /tmp/$0_logfilename ]]
+    if [[ ! -f /tmp/${sFileName}_logfilename ]]
     then
         echo "No output file specified, did you run this with -s first?"
         exit 1
     fi
-    sLogFile=$(cat /tmp/$0_logfilename)
+    sLogFile=$(cat /tmp/${sFileName}_logfilename)
     get_drillbit_logs $sLogFile
     delete_temp_file $sLogFile
-    rm /tmp/$0_logfilename
+    rm /tmp/${sFileName}_logfilename
 fi
