@@ -1,0 +1,145 @@
+#!/bin/bash
+# This is a MapR-specific script that will run a query against drill.
+# The main use of this script is to simplify the collection of log files related to a failing query.
+# It assumes that Drill is installed on the MapR sHost it's running on, and that you have ssh key
+# authentication configured around the cluster.
+#
+# Usage: run_drill_query.sh -f file.sql [-d outputdir]
+set -o nounset
+set -o errexit
+
+# Get options
+sOutputDir=$(pwd)
+
+function show_help {
+    echo "$0 [ -s | -e ] [ -d save_location ]"
+    echo ""
+    echo " If a save locaiton isn't specified, will save in the current directory."
+    echo " Use -s to checkpoint the logs before running the query"
+    echo " Use -e to end the queries and collect the logs"
+    echo ""
+}
+
+if [[ "$#" -eq 0 ]]
+then
+    show_help
+    exit 0
+fi
+
+sMode=""
+
+while getopts "hsed:" opt
+do
+    case "$opt" in
+        h)
+            show_help
+            exit 0
+            ;;
+        s)  sMode="start"
+            ;;
+        e)  sMode="end"
+            ;;
+        d)  sOutputDir=$OPTARG
+            ;;
+    esac
+done
+
+if [[ -z $sMode ]]
+then
+    show_help
+    exit 0
+fi
+
+if [[ ! -d $sOutputDir ]]
+then
+    mkdir $sOutputDir
+fi
+
+if [[ ! -d /opt/mapr/drill ]]
+then
+    echo "Drill not installed on this sHost."
+    exit 1
+fi
+
+# use RPM to find out which version of drill is installed
+sDrillVersion=$(basename $(rpm -ql mapr-drill | grep "/opt/mapr/drill/drill-" | head -n1))
+
+echo "Determining drillbit hosts..."
+aDrillHosts=($(maprcli node list -filter csvc=="drill-bits" -columns ip | awk '{print $1}' | tail -n +2))
+
+if [[ ${#aDrillHosts[@]} -eq 0 ]]
+then
+    echo "Couldn't find any nodes running Drill! (do you have permission to run 'maprcli'?)"
+    exit 1
+fi
+
+sZKConnect=$(cat /opt/mapr/drill/${sDrillVersion}/conf/drill-override.conf | grep zk.connect | awk '{print $2}' | sed 's/"//g')
+
+SQLLINE="/opt/mapr/drill/${sDrillVersion}/bin/sqlline -u \"jdbc:drill:zk=${sZKConnect}\""
+
+# simple log funciton for use inside functions
+function log {
+    echo "Log message: $1" >&2
+
+}
+
+# simple join function used in this script
+function join { local IFS="$1"; shift; echo "$*";  }
+
+
+function set_current_drillbit_logs {
+    # will copy the current drillbit.log to /tmp and return the location
+    # to be used with get_drillbit_logs to get only the updated log data.
+    sFilename="/tmp/$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)_drillbit.log"
+    
+    for sHost in ${aDrillHosts[@]}
+    do
+        log "Setting checkpoint for $sHost"
+        ssh -q $sHost "cp /opt/mapr/drill/${sDrillVersion}/logs/drillbit.log ${sFilename}" 2> /dev/null
+    done
+
+    echo $sFilename
+}
+
+function delete_temp_file {
+    for sHost in ${aDrillHosts[@]}
+    do
+        log "Deleting temp file on host $sHost"
+        ssh -q $sHost "rm -f $1 2> /dev/null"
+    done
+}
+
+function get_drillbit_logs {
+    # This function will go around to each sHost in aDrillHosts and get the difference
+    # in the drillbit.log since `set_current_drillbit_logs` was run.
+    sFilename=$1
+    sHostString=$(join , ${aDrillHosts[@]})
+    echo "Collecting log files from: ${sHostString}"
+    for sHost in ${aDrillHosts[@]}
+    do
+        ssh $sHost "diff ${sFilename} /opt/mapr/drill/${sDrillVersion}/logs/drillbit.log" > $sOutputDir/${sHost}_drillbit.log && echo "Received log file from ${sHost}"
+    done
+}
+
+sLogFile=""
+echo "Mode is: $sMode"
+
+if [[ "$sMode" == "start" ]]
+then
+    echo "setting checkpoints"
+    sLogFile=$(set_current_drillbit_logs)
+    echo $sLogFile > /tmp/$0_logfilename
+fi
+
+if [[ "$sMode" == "end" ]]
+then
+    if [[ ! -f /tmp/$0_logfilename ]]
+    then
+        echo "No output file specified, did you run this with -s first?"
+        exit 1
+    fi
+    sLogFile=$(cat /tmp/$0_logfilename)
+    get_drillbit_logs $sLogFile
+    delete_temp_file $sLogFile
+    rm /tmp/$0_logfilename
+fi
