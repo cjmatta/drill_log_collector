@@ -2,6 +2,8 @@
 Collect drill logs from all Drill hosts in a cluster. Only collects a `diff` of the logs between the start and end flags. 
 
 #### Usage
+It helps to have passwordless SSH keys set up around the cluster in case you don't want to type the password a bunch.
+
 Set the checkpoint:
 ```
 $ drill_log_collector -s
